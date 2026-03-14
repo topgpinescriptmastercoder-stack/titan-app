@@ -14,8 +14,7 @@ export default function Home() {
     }
   }, []);
 
-  // UPDATE THE TWO LINKS BELOW. DO NOT DELETE THE ?client_reference_id PART.
-   const starterLink = `https://buy.stripe.com/28EdR85iZ835brF2Ot4Ni01-starter?client_reference_id=${telegramId}`;
+  const starterLink = `https://buy.stripe.com/28EdR85iZ835brF2Ot4Ni01-starter?client_reference_id=${telegramId}`;
   const proLink = `https://buy.stripe.com/3cI14mfXD6Z1fHV4WB4Ni02-pro?client_reference_id=${telegramId}`;
 
   return (
@@ -41,4 +40,3 @@ export default function Home() {
     </div>
   );
 }
-
