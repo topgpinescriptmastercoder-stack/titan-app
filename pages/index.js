@@ -6,33 +6,22 @@ export default function Home() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const tryInit = () => {
-      const tg = window?.Telegram?.WebApp;
-      if (!tg) return false;
+    const tg = window?.Telegram?.WebApp;
+    if (tg) {
       tg.ready();
       tg.expand();
       const id = tg.initDataUnsafe?.user?.id;
-      setUid(id ? String(id) : 'GUEST');
-      setReady(true);
-      return true;
-    };
-
-    if (tryInit()) return;
-
-    // Poll until SDK injects
-    let attempts = 0;
-    const interval = setInterval(() => {
-      if (tryInit() || ++attempts > 20) clearInterval(interval);
-    }, 300);
-
-    return () => clearInterval(interval);
+      setUid(id ? String(id) : 'MEMBER');
+    } else {
+      setUid('MEMBER');
+    }
+    setReady(true);
   }, []);
 
-  const base = uid || 'GUEST';
+  const base = uid || 'MEMBER';
   const starter = `https://buy.stripe.com/28EdR85iZ835brF2Ot4Ni01-starter?client_reference_id=${base}`;
   const pro = `https://buy.stripe.com/3cI14mfXD6Z1fHV4WB4Ni02-pro?client_reference_id=${base}`;
 
-  // Block render until SDK ready
   if (!ready) return (
     <div style={{background:'#0a0a0a',minHeight:'100vh',
       display:'flex',alignItems:'center',justifyContent:'center'}}>
