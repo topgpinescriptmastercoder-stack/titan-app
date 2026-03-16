@@ -19,9 +19,8 @@ export default function Home() {
   }, []);
 
   const base = uid || 'MEMBER';
-  const starter = `https://buy.stripe.com/28EdR85iZ835brF2Ot4Ni01-starter?client_reference_id=${base}`;
-  const pro = `https://buy.stripe.com/3cI14mfXD6Z1fHV4WB4Ni02-pro?client_reference_id=${base}`;
-
+  const starter = `https://buy.stripe.com/28EdR85iZ835brF2Ot4Ni01?client_reference_id=${base}`;
+  const pro = `https://buy.stripe.com/3cI14mfXD6Z1fHV4WB4Ni02?client_reference_id=${base}`;
   if (!ready) return (
     <div style={{background:'#0a0a0a',minHeight:'100vh',
       display:'flex',alignItems:'center',justifyContent:'center'}}>
