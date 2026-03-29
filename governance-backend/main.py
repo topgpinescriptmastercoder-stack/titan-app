@@ -30,6 +30,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "titan-admin-key-change-me")
+SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY", "titan-system-internal-k9x2mq7p")  # Internal bypass key for scheduled/autonomous signals
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "titan-superquant-live")
 PORT = int(os.environ.get("PORT", 8080))
 VERSION = "4.0.0"
@@ -881,6 +882,12 @@ def protected_ai_endpoint(task_name: str, is_signal: bool = False):
         @require_user
         def wrapper(*args, **kwargs):
             user_id = g.user_id
+            # SYSTEM BYPASS: internal/scheduled signals from owner backend skip all limits
+            system_key = request.headers.get("X-System-Key") or request.args.get("system_key")
+            if system_key and system_key == SYSTEM_API_KEY:
+                g.task_name = task_name
+                g.system_bypass = True
+                return f(*args, **kwargs)
             # Rate limit
             rl_error = rate_limiter.check(user_id)
             if rl_error:
@@ -890,6 +897,7 @@ def protected_ai_endpoint(task_name: str, is_signal: bool = False):
             if sub_error:
                 return jsonify({"error": sub_error, "request_id": g.request_id}), 403
             g.task_name = task_name
+            g.system_bypass = False
             return f(*args, **kwargs)
         return wrapper
     return decorator
