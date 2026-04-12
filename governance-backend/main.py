@@ -30,10 +30,34 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "titan-admin-key-change-me")
-SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY", "titan-system-internal-k9x2mq7p")  # Internal bypass key for scheduled/autonomous signals
+SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY", "titan-system-internal-k9x2mq7p")
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "titan-superquant-live")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8628011018:AAHpn7BEI3Y6kO4DruU1fZmQpLGB3CdQJbY")
 PORT = int(os.environ.get("PORT", 8080))
-VERSION = "4.0.0"
+VERSION = "4.1.0"
+
+# ---------------------------------------------------------------------------
+# Tier → Telegram Channel Invite Links (static, rotate if abused)
+# ---------------------------------------------------------------------------
+TIER_CHANNEL_INVITES = {
+    "starter":    "https://t.me/+hGODv8ozhDQ0NGU1",   # Syndicate Pro $99
+    "pro":        "https://t.me/+dP5UObl8BHY4ZDI1",   # Syndicate Pro $199
+    "elite":      "https://t.me/+t4zjmKNo6qNmYTY1",   # Syndicate Elite $399
+    "enterprise": "https://t.me/+a8DOi0veoQ1lMTdl",   # Inner Titan Circle VVIP
+}
+
+def _send_telegram(chat_id: str, text: str) -> bool:
+    """Send a message via Telegram bot. Best-effort, non-blocking."""
+    try:
+        import urllib.request as _ur, urllib.parse as _up
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        data = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "HTML"}).encode()
+        req = _ur.Request(url, data=data, headers={"Content-Type": "application/json"})
+        _ur.urlopen(req, timeout=8)
+        return True
+    except Exception as exc:
+        logger.warning("Telegram notify failed for chat_id=%s: %s", chat_id, exc)
+        return False
 START_TIME = time.time()
 
 DISCLAIMER = (
@@ -54,15 +78,52 @@ SCHEDULER_USER_IDS = {"titan-scheduler", "scheduler", "cron", "auto"}
 # Minimum confidence threshold — below this → NO_SIGNAL
 MIN_CONFIDENCE_THRESHOLD = 0.60
 
-# Known current price ranges (March 2026) for price sanity checks
-ASSET_PRICE_RANGES = {
-    "XAU/USD":  (2700.0,  3400.0),   # Gold (XAU/USD)
-    "XAUUSD":   (2700.0,  3400.0),
-    "BTC/USDT": (55000.0, 110000.0), # Bitcoin
-    "BTCUSDT":  (55000.0, 110000.0),
-    "ETH/USDT": (2000.0,  5000.0),   # Ethereum
-    "DXY":      (98.0,    110.0),    # US Dollar Index
+# ---------------------------------------------------------------------------
+# LIVE MARKET PRICE FEED — Yahoo Finance (no API key required)
+# PRODUCTION RULE: All price hints and sanity gates use LIVE data only.
+# If live fetch fails → NO_SIGNAL enforced. No static fallback.
+# ---------------------------------------------------------------------------
+
+YAHOO_TICKERS = {
+    "XAU/USD":  "GC=F",       # Gold futures (live spot proxy)
+    "XAUUSD":   "GC=F",
+    "BTC/USDT": "BTC-USD",
+    "BTCUSDT":  "BTC-USD",
+    "ETH/USDT": "ETH-USD",
+    "ETHUSD":   "ETH-USD",
+    "DXY":      "DX-Y.NYB",
 }
+
+# Validation tolerance: ±20% of live price
+# (wide enough to cover entry→TP3 spread for 4H/1D setups)
+PRICE_TOLERANCE = 0.20
+
+def fetch_live_price(asset: str) -> float | None:
+    """
+    Fetch live market price from Yahoo Finance.
+    Returns float price or None if unavailable.
+    NO fallback to static data — caller must treat None as NO_SIGNAL condition.
+    """
+    import urllib.request as _req
+    import json as _json
+
+    ticker = YAHOO_TICKERS.get(asset.replace("/", ""), YAHOO_TICKERS.get(asset))
+    if not ticker:
+        logger.warning("LIVE_PRICE: no ticker mapping for asset=%s", asset)
+        return None
+
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=1d"
+    try:
+        req = _req.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _req.urlopen(req, timeout=12) as resp:
+            data = _json.loads(resp.read())
+        price = data["chart"]["result"][0]["meta"]["regularMarketPrice"]
+        price = float(price)
+        logger.info("LIVE_PRICE: asset=%s ticker=%s price=%.4f", asset, ticker, price)
+        return price
+    except Exception as exc:
+        logger.error("LIVE_PRICE FETCH FAILED: asset=%s ticker=%s error=%s", asset, ticker, exc)
+        return None
 
 # ---------------------------------------------------------------------------
 # Production Governance Lock — OSINT/CA System Instruction
@@ -1065,11 +1126,29 @@ def generate_signal():
         current_datetime_str = now_utc.strftime("%A, %d %B %Y %H:%M UTC")
         current_date_str = now_utc.strftime("%d %B %Y")
 
-        # ── Price range hint for sanity (from governance constants) ───────────
-        price_range = ASSET_PRICE_RANGES.get(asset.replace("/", ""), ASSET_PRICE_RANGES.get(asset, None))
-        price_hint = ""
-        if price_range:
-            price_hint = f"\nKNOWN PRICE RANGE for {asset} as of {current_date_str}: ${price_range[0]:,.2f} – ${price_range[1]:,.2f}. All prices MUST fall within this range."
+        # ── LIVE price fetch — NO static fallback allowed ─────────────────────
+        live_price = fetch_live_price(asset)
+        if live_price is None:
+            logger.error("LIVE_PRICE UNAVAILABLE for %s — enforcing NO_SIGNAL", asset)
+            return jsonify({
+                "status": "no_signal",
+                "no_signal": True,
+                "no_signal_reason": f"Live market price unavailable for {asset}. Cannot generate a valid signal without real-time data. Try again shortly.",
+                "asset": asset,
+                "signal_id": signal_id,
+                "timestamp": now_utc.isoformat(),
+                "request_id": g.request_id
+            }), 200
+
+        tol = PRICE_TOLERANCE
+        live_price_min = round(live_price * (1 - tol), 2)
+        live_price_max = round(live_price * (1 + tol), 2)
+        price_hint = (
+            f"\nLIVE MARKET PRICE for {asset} as of {current_datetime_str}: ${live_price:,.2f}."
+            f"\nAll entry zones, stop losses, and take profits MUST be anchored to this live price."
+            f"\nAcceptable price range for this signal: ${live_price_min:,.2f} – ${live_price_max:,.2f}."
+            f"\nDo NOT use outdated, cached, or training-data prices. Use ONLY the live price provided above."
+        )
 
         # ---- STAGE 1: Call Gemini with NATIVE JSON MODE ────────────────────
         # Full 8-step TITAN Intelligence Pipeline:
@@ -1246,24 +1325,41 @@ HARD RULES:
                 "request_id": g.request_id
             }), 200
 
-        # ── Price Sanity Gate ───────────────────────────────────────────────
-        price_range = ASSET_PRICE_RANGES.get(asset.replace("/", ""), ASSET_PRICE_RANGES.get(asset, None))
-        if price_range:
-            entry_min = float(parsed.get("entry_zone", {}).get("min", 0))
-            entry_max = float(parsed.get("entry_zone", {}).get("max", 0))
-            pmin, pmax = price_range
-            if entry_min > 0 and (entry_min < pmin or entry_max > pmax):
-                logger.warning("PRICE_SANITY FAIL for %s: entry %.2f-%.2f outside range %.2f-%.2f",
-                               asset, entry_min, entry_max, pmin, pmax)
-                return jsonify({
-                    "status": "no_signal",
-                    "no_signal": True,
-                    "no_signal_reason": f"Price sanity check failed: entry zone ${entry_min:,.2f}–${entry_max:,.2f} is outside known range for {asset}. Stale/hallucinated price detected.",
-                    "asset": asset,
-                    "signal_id": signal_id,
-                    "timestamp": now_utc.isoformat(),
-                    "request_id": g.request_id
-                }), 200
+        # ── LIVE Price Sanity Gate — anchored to real-time fetched price ───────
+        # live_price was fetched above; if somehow None here, reject signal
+        if live_price is None:
+            return jsonify({
+                "status": "no_signal",
+                "no_signal": True,
+                "no_signal_reason": f"Live price unavailable at validation stage for {asset}. Signal rejected.",
+                "asset": asset,
+                "signal_id": signal_id,
+                "timestamp": now_utc.isoformat(),
+                "request_id": g.request_id
+            }), 200
+
+        entry_min = float(parsed.get("entry_zone", {}).get("min", 0))
+        entry_max = float(parsed.get("entry_zone", {}).get("max", 0))
+        pmin = live_price * (1 - PRICE_TOLERANCE)
+        pmax = live_price * (1 + PRICE_TOLERANCE)
+        if entry_min > 0 and (entry_min < pmin or entry_max > pmax):
+            logger.warning(
+                "PRICE_SANITY FAIL for %s: entry %.2f-%.2f outside live range %.2f-%.2f (live=%.2f)",
+                asset, entry_min, entry_max, pmin, pmax, live_price
+            )
+            return jsonify({
+                "status": "no_signal",
+                "no_signal": True,
+                "no_signal_reason": (
+                    f"Price sanity check failed: entry zone ${entry_min:,.2f}–${entry_max:,.2f} "
+                    f"is outside live market range ${pmin:,.2f}–${pmax:,.2f} "
+                    f"(live {asset} price: ${live_price:,.2f}). Stale/hallucinated price detected."
+                ),
+                "asset": asset,
+                "signal_id": signal_id,
+                "timestamp": now_utc.isoformat(),
+                "request_id": g.request_id
+            }), 200
 
         # ---- STAGE 3: Build canonical signal object ----
         canonical = {
