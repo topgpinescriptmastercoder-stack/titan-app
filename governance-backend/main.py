@@ -34,7 +34,7 @@ SYSTEM_API_KEY = os.environ.get("SYSTEM_API_KEY", "titan-system-internal-k9x2mq7
 GCP_PROJECT = os.environ.get("GCP_PROJECT", "titan-superquant-live")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8628011018:AAHpn7BEI3Y6kO4DruU1fZmQpLGB3CdQJbY")
 PORT = int(os.environ.get("PORT", 8080))
-VERSION = "4.1.0"
+VERSION = "4.2.1"
 
 # ---------------------------------------------------------------------------
 # Tier → Telegram Channel Invite Links (static, rotate if abused)
